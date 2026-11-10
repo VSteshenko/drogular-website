@@ -1,71 +1,130 @@
 # Drogular Website
 
 Official website for [Drogular](https://github.com/VSteshenko/drogular).
-This is an **independent application** built using Drogular's public API.
+This is an **independent application** that uses Drogular's public API.
 
 ## Status
 
-Website **0.1**, Stage A.2 — application foundation. The home page is
-intentionally a placeholder; layout, documentation, demos, and Playground
-are implemented in later stages.
+Website **0.1 — Stage A.3** (CLI, runtime profiles, GoogleTest, HTTP integration tests, Linux CI).
+The homepage is still a placeholder. Website layout, documentation, live
+demos and Playground are planned for later stages.
 
 ## Requirements
 
-- CMake 3.24 or newer and a C++20 compiler
-- Drogon installed and discoverable by CMake (`find_package(Drogon REQUIRED)`)
-- Git access during the first configure, to retrieve Drogular
+- CMake 3.24+ and a C++20 compiler
+- Drogon installed and findable by CMake (`find_package(Drogon REQUIRED)`)
+- Git access on first configure to fetch Drogular `v0.25.0`
+- GoogleTest 1.17.0 for tests (found locally or fetched automatically; disable with `-DDROGULAR_WEBSITE_BUILD_TESTS=OFF`)
 
-CMake pins Drogular to the `v0.25.0` Git tag. Website changes are deployed
-independently from framework releases; upgrades require a deliberate tag change.
+The framework is pinned to **Drogular `v0.25.0`** in `CMakeLists.txt`.
+Do not track the framework's development branch in production.
 
 ## Build
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 4
+ctest --test-dir build --output-on-failure
 ```
+
+If Drogon was installed into a custom prefix, add
+`-DCMAKE_PREFIX_PATH=/path/to/drogon-install` at configuration time.
 
 ## Run
 
-Run from the **repository root**: template and static asset paths are currently
-relative to the process working directory.
+Run **from the repository root**: `templates/` and `public/` are relative
+to the process's working directory.
 
 ```bash
-./build/drogular_website
+./build/drogular_website --help
+./build/drogular_website --version
+./build/drogular_website --port 8080 --env development
 ```
 
-Open <http://localhost:8080/>. Static files in `public/` are served from
-`/assets`.
+Open <http://localhost:8080/>. Public assets will be served under `/assets`.
+
+### Development and production profiles
+
+| Setting | `development` (default) | `production` |
+| --- | --- | --- |
+| Template cache | Disabled | Enabled |
+| Static cache | Development profile (no Cache-Control) | Production profile (24h max-age, ETag, Last-Modified) |
+| Developer Tools | Disabled | Disabled |
+
+The **Developer Tools remain explicitly disabled** in both modes:
+`App::run()` binds all interfaces (`0.0.0.0`) on the selected port.
+Never expose a development instance directly to the internet. For public
+deployments use `--env production` behind Nginx and restrict the app port
+in the host firewall/security group.
+
+Environment variables are useful for a future systemd/Docker deployment:
+
+```bash
+DROGULAR_WEBSITE_PORT=8088 DROGULAR_WEBSITE_ENV=production ./build/drogular_website
+```
+
+CLI arguments take precedence over environment variables. Invalid values
+cause an error and non-zero exit. Port 0 is intentionally prohibited.
+
+## Tests
+
+The website uses **GoogleTest 1.17.0**, the same test framework and version as
+Drogular. CMake registers individual test cases with `gtest_discover_tests()`.
+Tests do not require Python, curl or a shell HTTP client.
+
+```bash
+cmake -S . -B build -DDROGULAR_WEBSITE_BUILD_TESTS=ON
+cmake --build build --parallel 4
+ctest --test-dir build --output-on-failure
+# Optional: filter just HTTP tests or run the executable directly
+ctest --test-dir build -R WebsiteHttpTests --output-on-failure
+./build/website_tests --gtest_list_tests
+```
+
+Test coverage:
+
+- `WebsiteOptionsTests` — default values, precedence, aliases and invalid CLI/env input.
+- `WebsiteApplicationTests` — development/production profiles, cache configuration,
+  route/static file registration, and disabled Developer Tools.
+- `WebsiteCliTests` — actual executable output and exit status for help, version,
+  and invalid input.
+- `WebsiteHttpTests` — starts the **real executable** in development and production,
+  requests `/` over loopback HTTP, checks SSR content and unknown-route 404,
+  and terminates the child server even after a failed assertion.
+
+HTTP integration tests currently use POSIX processes/sockets (Linux/macOS). They
+pick a temporary loopback port, launch from the repository root so relative
+`templates/` paths work, and enforce a bounded server-startup wait. Test fixture
+source lives in `tests/support/`; the website reuses the exact application
+registration source for both production and unit tests.
+
+The GitHub Actions workflow builds and tests on Ubuntu x64 and ARM64. It builds
+Drogon **v1.9.13 from source** with ORM, examples, drogon_ctl, Brotli and YAML
+configuration disabled. CI does not deploy anything.
 
 ## Source layout
 
 ```text
 src/
-  main.cpp                             Process entry point only
+  main.cpp                            CLI entry point and startup
   application/
-    website_application.hpp/.cpp      Shared setup and feature registration
-  features/
-    home/
-      home_routes.hpp/.cpp            Home route + component registration
-      home_page.hpp                   Home page implementation
-      home_component.hpp              Home-specific component
-templates/
-  pages/home.html                     Home page markup
-  components/home.html                Home component markup
-public/                                Static resources served at /assets
+    website_options.hpp/.cpp          CLI + environment parsing
+    website_application.hpp/.cpp      Runtime configuration and registration
+    website_version.hpp.in            Version generated by CMake
+  features/home/
+    home_routes.hpp/.cpp              Route and component registration
+    home_page.hpp                     SSR page
+    home_component.hpp                Introductory component
+templates/pages/home.html            Home page markup
+templates/components/home.html       Home component markup
+public/                               Static resources at /assets
+tests/
+  application/                         GoogleTest: options and app setup
+  http/                                GoogleTest: CLI and HTTP integration
+  support/                             POSIX subprocess and HTTP helpers
+.github/workflows/ci.yml              Linux build-and-test workflow
 ```
 
-New sections (`documentation`, `examples`, `playground`, `releases`) should
-register their routes in their own feature modules rather than adding logic to
-`main.cpp`. Shared layout components will be introduced in Stage B.
-
-## Local smoke check
-
-After the app starts, run:
-
-```bash
-curl --fail --silent --show-error http://localhost:8080/ | grep 'Hello Drogular'
-```
-
-This confirms that the root page is routed and rendered. Full tests and CI
-will be added in subsequent foundation and release stages.
+Features (`documentation`, `examples`, `playground`, `releases`) will be
+registered in their own modules when implemented. Stage B will add shared
+layout components and styles.

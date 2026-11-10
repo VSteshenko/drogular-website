@@ -1,0 +1,59 @@
+name: Website CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux / ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+
+    steps:
+      - name: Checkout Website
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build git pkg-config python3 \
+            libssl-dev libjsoncpp-dev uuid-dev zlib1g-dev
+
+      - name: Build and install Drogon from source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch v1.9.13 --recurse-submodules \
+            https://github.com/drogonframework/drogon.git "$RUNNER_TEMP/drogon-src"
+          cmake -S "$RUNNER_TEMP/drogon-src" -B "$RUNNER_TEMP/drogon-build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/drogon-install" \
+            -DBUILD_EXAMPLES=OFF -DBUILD_CTL=OFF -DBUILD_ORM=OFF \
+            -DBUILD_BROTLI=OFF -DBUILD_YAML_CONFIG=OFF \
+            -DBUILD_TESTING=OFF
+          cmake --build "$RUNNER_TEMP/drogon-build" --parallel 2
+          cmake --install "$RUNNER_TEMP/drogon-build"
+
+      - name: Configure Website
+        shell: bash
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/drogon-install" \
+            -DDROGULAR_WEBSITE_BUILD_TESTS=ON
+
+      - name: Build Website
+        run: cmake --build build --parallel 2
+
+      - name: Test Website
+        run: ctest --test-dir build --output-on-failure

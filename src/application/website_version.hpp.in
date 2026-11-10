@@ -1,0 +1,3 @@
+#pragma once
+
+#define DROGULAR_WEBSITE_VERSION "@PROJECT_VERSION@"
